@@ -22,11 +22,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Check Xcode Version
+        run: |
+          echo "Active Xcode Version:"
+          xcodebuild -version
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
+
+      - name: Precache iOS Engine Artifacts
+        run: flutter precache --ios
 
       - name: Install Dependencies
         working-directory: flutter_app
@@ -37,13 +45,15 @@ jobs:
         run: |
           flutter build ios --release --no-codesign --dart-define=PB_URL=${{ inputs.pb_url || 'https://pb-dev.todoin.id' }}
 
-      - name: Package App into .ipa
+      - name: Package App into Sideloadable .ipa
         working-directory: flutter_app/build/ios/iphoneos
         run: |
-          mkdir Payload
-          cp -r Runner.app Payload/
-          zip -r -q todoin-release.ipa Payload
+          mkdir -p Payload
+          cp -r -p Runner.app Payload/
+          zip -r -y -q todoin-release.ipa Payload
           rm -rf Payload
+          echo "=== IPA Berhasil Dibuat ==="
+          ls -lh todoin-release.ipa
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
@@ -51,3 +61,4 @@ jobs:
           name: todoin-ios-ipa
           path: flutter_app/build/ios/iphoneos/todoin-release.ipa
           retention-days: 14
+          if-no-files-found: error
