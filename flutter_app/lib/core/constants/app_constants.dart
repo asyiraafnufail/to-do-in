@@ -1,18 +1,14 @@
-import 'package:flutter/foundation.dart';
-
 class AppConstants {
   AppConstants._();
 
-  // URL PocketBase: otomatis memilih 10.0.2.2 di emulator Android atau 127.0.0.1 di iOS/macOS/desktop/web.
-  // Override via --dart-define=PB_URL=... saat run/build.
+  // URL PocketBase Backend:
+  // Mengarah ke VPS Contabo (https://pb-dev.todoin.id).
+  // Override via --dart-define=PB_URL=... saat ingin mengarahkan ke lokal atau environment lain.
   static String get pbUrl {
     const fromEnv = String.fromEnvironment('PB_URL');
     if (fromEnv.isNotEmpty) return fromEnv;
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:8090';
-    }
-    return 'http://127.0.0.1:8090';
+    return 'https://pb-dev.todoin.id';
   }
 
   static const List<String> postCategories = [
