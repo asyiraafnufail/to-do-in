@@ -280,18 +280,30 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final province = listing.getStringValue('province');
     final images = listing.getListValue<String>('images');
     final specs = listing.get<Map<String, dynamic>?>('specs') ?? {};
-    final isAvailable = listing.data['is_available'] != false;
+    final isAvailable = listing.getBoolValue('is_available', true);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
         actions: [
-          if (isOwnListing)
+          if (isOwnListing) ...[
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit Layanan',
+              onPressed: () async {
+                final updated = await context.push<bool>(
+                  '/create-listing',
+                  extra: listing,
+                );
+                if (updated == true) _loadListing();
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
               tooltip: 'Hapus Layanan',
               onPressed: _deleteListing,
             ),
+          ],
         ],
       ),
       body: SafeArea(

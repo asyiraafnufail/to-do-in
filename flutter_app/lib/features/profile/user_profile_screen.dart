@@ -172,6 +172,24 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  Future<void> _handleContactTap(VoidCallback onAuthorized) async {
+    if (!pb.authStore.isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'Masuk ke akun untuk melihat dan menghubungi kontak kreator.'),
+          action: SnackBarAction(
+            label: 'Masuk',
+            textColor: AppColors.accent,
+            onPressed: () => context.push('/login'),
+          ),
+        ),
+      );
+      return;
+    }
+    onAuthorized();
+  }
+
   Future<void> _openWhatsApp(String phone, String name) async {
     final clean = phone.replaceAll(RegExp(r'[^0-9]'), '');
     final uri = Uri.parse(
@@ -354,7 +372,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           ),
                           icon: const Icon(Icons.chat, size: 20),
                           tooltip: 'Chat WhatsApp',
-                          onPressed: () => _openWhatsApp(wa, name),
+                          onPressed: () =>
+                              _handleContactTap(() => _openWhatsApp(wa, name)),
                         ),
                       if (canViewContact && ig.isNotEmpty) ...[
                         const SizedBox(width: 6),
@@ -365,7 +384,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           ),
                           icon: const Icon(Icons.camera_alt, size: 20),
                           tooltip: 'Instagram @$ig',
-                          onPressed: () => _openInstagram(ig),
+                          onPressed: () =>
+                              _handleContactTap(() => _openInstagram(ig)),
                         ),
                       ],
                     ],

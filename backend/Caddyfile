@@ -1,0 +1,16 @@
+# Ganti api.todoin.id dengan domain atau subdomain Anda.
+# Caddy secara otomatis mengurus dan memperbarui sertifikat SSL (HTTPS) Let's Encrypt gratis.
+
+api.todoin.id {
+    # Batas ukuran upload (contoh: 20MB untuk foto resolusi tinggi sebelum kompresi)
+    request_body {
+        max_size 20MB
+    }
+
+    reverse_proxy 127.0.0.1:8090 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

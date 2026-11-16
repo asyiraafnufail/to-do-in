@@ -4,13 +4,16 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:pocketbase/pocketbase.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 
 class CreateListingScreen extends StatefulWidget {
-  const CreateListingScreen({super.key});
+  final RecordModel? initialListing;
+
+  const CreateListingScreen({super.key, this.initialListing});
 
   @override
   State<CreateListingScreen> createState() => _CreateListingScreenState();
@@ -35,6 +38,35 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final List<XFile> _selectedImages = [];
   final ImagePicker _picker = ImagePicker();
   bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final l = widget.initialListing;
+    if (l != null) {
+      _titleCtrl.text = l.getStringValue('title');
+      _descCtrl.text = l.getStringValue('description');
+      _priceCtrl.text = l.getIntValue('price').toString();
+      _cityCtrl.text = l.getStringValue('city');
+      _type = l.getStringValue('type', 'vehicle');
+      _priceUnit = l.getStringValue('price_unit', 'day');
+      final prov = l.getStringValue('province');
+      if (prov.isNotEmpty) _province = prov;
+
+      final specs = l.get<Map<String, dynamic>?>('specs');
+      if (specs != null && specs.isNotEmpty) {
+        final entries = specs.entries.toList();
+        if (entries.isNotEmpty) {
+          _spec1KeyCtrl.text = entries[0].key;
+          _spec1ValCtrl.text = entries[0].value?.toString() ?? '';
+        }
+        if (entries.length > 1) {
+          _spec2KeyCtrl.text = entries[1].key;
+          _spec2ValCtrl.text = entries[1].value?.toString() ?? '';
+        }
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -132,6 +164,33 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         ));
       }
 
+      if (widget.initialListing != null) {
+        await pb.collection('listings').update(
+          widget.initialListing!.id,
+          body: {
+            'type': _type,
+            'title': _titleCtrl.text.trim(),
+            'description': _descCtrl.text.trim(),
+            'price': priceNum,
+            'price_unit': _priceUnit,
+            'city': _cityCtrl.text.trim(),
+            'province': _province,
+            'specs': specs,
+          },
+          files: files,
+        );
+
+        listingsRefreshNotifier.value++;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Perubahan layanan disimpan!')),
+          );
+          context.pop(true);
+        }
+        return;
+      }
+
       await pb.collection('listings').create(
         body: {
           'owner': userId,
@@ -171,7 +230,9 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tambah Layanan Host'),
+        title: Text(widget.initialListing != null
+            ? 'Edit Layanan Host'
+            : 'Tambah Layanan Host'),
       ),
       body: SafeArea(
         child: Align(
@@ -495,9 +556,11 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : const Text(
-                            'Publikasikan Layanan',
-                            style: TextStyle(
+                        : Text(
+                            widget.initialListing != null
+                                ? 'Simpan Perubahan'
+                                : 'Publikasikan Layanan',
+                            style: const TextStyle(
                                 fontWeight: FontWeight.w700, fontSize: 15),
                           ),
                   ),

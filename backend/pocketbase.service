@@ -1,0 +1,18 @@
+[Unit]
+Description=PocketBase Backend Service for To-Do In
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+LimitNOFILE=4096
+WorkingDirectory=/opt/pocketbase
+ExecStart=/opt/pocketbase/pocketbase serve --http="127.0.0.1:8090"
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/pocketbase.log
+StandardError=append:/var/log/pocketbase_error.log
+
+[Install]
+WantedBy=multi-user.target

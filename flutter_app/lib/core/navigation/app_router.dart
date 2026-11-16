@@ -100,7 +100,9 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/create-listing',
       parentNavigatorKey: _rootNavigatorKey,
-      builder: (context, state) => const CreateListingScreen(),
+      builder: (context, state) => CreateListingScreen(
+        initialListing: state.extra as RecordModel?,
+      ),
     ),
     GoRoute(
       path: '/kyc',

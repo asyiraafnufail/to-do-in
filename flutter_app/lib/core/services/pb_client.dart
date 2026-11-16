@@ -4,6 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/app_constants.dart';
 
+// Alias untuk kemudahan onboarding tim sesuai README.md
+String get kDefaultPbUrl => AppConstants.pbUrl;
+
 // Persistent client instance; starts with in-memory fallback, upgraded via initPb()
 PocketBase pb = PocketBase(AppConstants.pbUrl);
 

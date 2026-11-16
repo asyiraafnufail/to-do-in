@@ -11,6 +11,7 @@ import 'package:flutter_app/core/utils/date_formatter.dart';
 import 'package:flutter_app/features/admin/admin_dashboard_screen.dart';
 import 'package:flutter_app/features/explore/explore_screen.dart';
 import 'package:flutter_app/features/feed/widgets/post_card.dart';
+import 'package:flutter_app/features/marketplace/create_listing_screen.dart';
 import 'package:flutter_app/features/marketplace/widgets/listing_card.dart';
 import 'package:flutter_app/features/profile/profile_screen.dart';
 import 'package:flutter_app/features/todo/todo_screen.dart';
@@ -25,6 +26,10 @@ String _fakeJwt() {
 void main() {
   setUpAll(() {
     GoogleFonts.config.allowRuntimeFetching = false;
+  });
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
   });
 
   tearDown(() {
@@ -286,5 +291,38 @@ void main() {
 
     expect(find.text('Admin Panel'), findsOneWidget);
     expect(find.text('KYC Host'), findsOneWidget);
+  });
+
+  testWidgets('CreateListingScreen initializes with initialListing in edit mode',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final mockListing = RecordModel({
+      'id': 'l1',
+      'title': 'Sewa NMax Jogja',
+      'description': 'Kondisi mulus',
+      'price': 110000,
+      'price_unit': 'day',
+      'city': 'Sleman',
+      'province': 'DI Yogyakarta',
+      'type': 'vehicle',
+      'specs': {'Model': 'NMax 2023', 'Transmisi': 'Matic'},
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CreateListingScreen(initialListing: mockListing),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit Layanan Host'), findsOneWidget);
+    expect(find.text('Sewa NMax Jogja'), findsOneWidget);
+    expect(find.text('Simpan Perubahan'), findsOneWidget);
   });
 }

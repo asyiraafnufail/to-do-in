@@ -7,6 +7,7 @@ import 'package:pocketbase/pocketbase.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/date_formatter.dart';
+import '../marketplace/widgets/listing_card.dart';
 
 class PostDetailScreen extends StatefulWidget {
   final String postId;
@@ -21,6 +22,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   bool _isLoading = true;
   String? _error;
   RecordModel? _post;
+  List<RecordModel> _authorListings = [];
 
   final Set<String> _savedTodoItems = {};
   List<RecordModel> _comments = [];
@@ -61,9 +63,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             widget.postId,
             expand: 'author',
           );
+      List<RecordModel> authorListings = [];
+      final authorId = post.getStringValue('author');
+      if (authorId.isNotEmpty) {
+        try {
+          final lRes = await pb.collection('listings').getList(
+                filter: 'owner = "$authorId" && is_available = true',
+                sort: '-created',
+                perPage: 3,
+                expand: 'owner',
+              );
+          authorListings = lRes.items;
+        } catch (_) {}
+      }
+
       if (mounted) {
         setState(() {
           _post = post;
+          _authorListings = authorListings;
           _isLoading = false;
         });
       }
@@ -828,6 +845,39 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             ),
                           ),
                         ),
+                      // Layanan Penulis (User Flow 2.2 Conversion Loop)
+                      if (_authorListings.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const Icon(Icons.storefront,
+                                color: AppColors.primary, size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Layanan oleh Penulis',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Sewa kendaraan, open trip, atau penginapan terverifikasi yang dikelola langsung oleh penulis cerita ini.',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textMuted),
+                        ),
+                        const SizedBox(height: 10),
+                        ..._authorListings.map(
+                          (l) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: ListingCard(
+                              key: ValueKey(l.id),
+                              listing: l,
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 24),
                       const Divider(),
                       const SizedBox(height: 12),

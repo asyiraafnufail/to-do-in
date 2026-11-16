@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -160,6 +162,46 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       // shortcut: round to 3 decimal places (~110m accuracy) per PRD NFR-1 privacy rule
       final latRounded = double.parse(pos.latitude.toStringAsFixed(3));
       final lngRounded = double.parse(pos.longitude.toStringAsFixed(3));
+
+      // Reverse geocoding otomatis per PRD FR-2.2
+      String? detectedCity;
+      String? detectedProvince;
+      String? detectedPlace;
+      try {
+        final placemarks =
+            await placemarkFromCoordinates(pos.latitude, pos.longitude);
+        if (placemarks.isNotEmpty) {
+          final place = placemarks.first;
+          final rawCity = place.subAdministrativeArea?.isNotEmpty == true
+              ? place.subAdministrativeArea!
+              : (place.locality?.isNotEmpty == true ? place.locality! : '');
+          if (rawCity.isNotEmpty) {
+            detectedCity = rawCity
+                .replaceAll(RegExp(r'^(Kabupaten|Kota)\s+', caseSensitive: false), '')
+                .trim();
+          }
+
+          if (place.administrativeArea?.isNotEmpty == true) {
+            final rawProv = place.administrativeArea!;
+            detectedProvince = AppConstants.provinces.firstWhere(
+              (p) =>
+                  p.toLowerCase() == rawProv.toLowerCase() ||
+                  rawProv.toLowerCase().contains(p.toLowerCase()) ||
+                  p.toLowerCase().contains(rawProv.toLowerCase()),
+              orElse: () => _province,
+            );
+          }
+
+          if (place.name?.isNotEmpty == true &&
+              place.name != rawCity &&
+              place.name != place.administrativeArea) {
+            detectedPlace = place.name;
+          }
+        }
+      } catch (geoErr) {
+        debugPrint('Reverse geocoding note: $geoErr');
+      }
+
       if (mounted) {
         setState(() {
           _lat = latRounded;
@@ -167,6 +209,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           _isLiveGps = true;
           _isLoadingGps = false;
           _gpsError = null;
+          if (detectedCity != null && _cityCtrl.text.trim().isEmpty) {
+            _cityCtrl.text = detectedCity;
+          }
+          if (detectedProvince != null) {
+            _province = detectedProvince;
+          }
+          if (detectedPlace != null && _placeCtrl.text.trim().isEmpty) {
+            _placeCtrl.text = detectedPlace;
+          }
         });
       }
     } on TimeoutException {
@@ -184,6 +235,22 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           _gpsError = 'Gagal mendeteksi lokasi: $e';
         });
       }
+    }
+  }
+
+  Future<Uint8List> _compressBytes(XFile file) async {
+    final raw = await file.readAsBytes();
+    if (kIsWeb || raw.lengthInBytes <= 450000) return raw; // < ~450 KB is safe under 512 KB
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        raw,
+        minWidth: 1280,
+        minHeight: 1280,
+        quality: 75,
+      );
+      return compressed.lengthInBytes <= 524288 ? compressed : raw;
+    } catch (_) {
+      return raw;
     }
   }
 
@@ -214,11 +281,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
       final files = <http.MultipartFile>[];
       for (final img in _selectedImages) {
-        final bytes = await img.readAsBytes();
+        final bytes = await _compressBytes(img);
         files.add(http.MultipartFile.fromBytes(
           'images',
           bytes,
-          filename: img.name,
+          filename: img.name.isNotEmpty ? img.name : 'image.jpg',
         ));
       }
 

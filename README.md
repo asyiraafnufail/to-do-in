@@ -34,10 +34,11 @@ to-do-in/
 Teman satu tim dapat memilih salah satu opsi:
 
 #### Opsi A — Terhubung ke VPS Tim (Paling Cepat):
-Atur URL backend di `flutter_app/lib/core/services/pb_client.dart`:
-```dart
-const String kDefaultPbUrl = 'https://<URL_TUNNEL_ATAU_DOMAIN_VPS>';
+Jalankan aplikasi dengan `--dart-define`:
+```bash
+flutter run --dart-define=PB_URL=https://pb-dev.todoin.id
 ```
+Atau atur langsung URL backend default di `flutter_app/lib/core/constants/app_constants.dart`.
 
 #### Opsi B — Menjalankan PocketBase Lokal:
 1. Letakkan binari `pocketbase` di folder `backend/`.

@@ -1,11 +1,19 @@
+import 'package:flutter/foundation.dart';
+
 class AppConstants {
   AppConstants._();
 
-  // shortcut: default live HTTPS URL via Cloudflare tunnel; override via --dart-define=PB_URL=... if needed
-  static const String pbUrl = String.fromEnvironment(
-    'PB_URL',
-    defaultValue: 'https://suggestion-passive-texas-chapel.trycloudflare.com',
-  );
+  // URL PocketBase: otomatis memilih 10.0.2.2 di emulator Android atau 127.0.0.1 di iOS/macOS/desktop/web.
+  // Override via --dart-define=PB_URL=... saat run/build.
+  static String get pbUrl {
+    const fromEnv = String.fromEnvironment('PB_URL');
+    if (fromEnv.isNotEmpty) return fromEnv;
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8090';
+    }
+    return 'http://127.0.0.1:8090';
+  }
 
   static const List<String> postCategories = [
     'Kuliner',

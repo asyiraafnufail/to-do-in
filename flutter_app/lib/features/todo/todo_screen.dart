@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
@@ -49,20 +51,100 @@ class _TodoScreenState extends State<TodoScreen> {
   Future<void> _loadTodos() async {
     if (!pb.authStore.isValid) return;
 
+    final userId = pb.authStore.record?.id;
     setState(() => _isLoading = true);
+
+    // 1. Offline fallback cache
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedStr = prefs.getString('cached_todos_$userId');
+      if (cachedStr != null && cachedStr.isNotEmpty && _todos.isEmpty) {
+        final decoded = jsonDecode(cachedStr) as List<dynamic>;
+        if (mounted) {
+          setState(() {
+            _todos = decoded.cast<Map<String, dynamic>>();
+          });
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fetch fresh from PocketBase
     try {
       final records = await pb.collection('user_todos').getFullList(
             sort: '-created',
             expand: 'source_post',
           );
+      final list = records.map((r) => r.toJson()).toList();
       if (mounted) {
         setState(() {
-          _todos = records.map((r) => r.toJson()).toList();
-          _isLoading = false;
+          _todos = list;
         });
       }
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('cached_todos_$userId', jsonEncode(list));
+      } catch (_) {}
     } catch (_) {
+      // Offline fallback: keep existing or cached _todos
+    } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _showEditNoteDialog(
+      String id, String currentNote, String taskTitle) async {
+    final noteCtrl = TextEditingController(text: currentNote);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Catatan Pribadi',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(taskTitle,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: AppColors.primary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteCtrl,
+              maxLines: 3,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText:
+                    'Misal: Bawa uang tunai, datang sebelum jam 07.00...',
+                labelText: 'Catatan Anda',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+
+    if (saved == true && mounted) {
+      final newNote = noteCtrl.text.trim();
+      try {
+        await pb.collection('user_todos').update(id, body: {'notes': newNote});
+        _loadTodos();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Gagal menyimpan catatan: $e')),
+          );
+        }
+      }
     }
   }
 
@@ -572,6 +654,7 @@ class _TodoScreenState extends State<TodoScreen> {
       Map<String, dynamic> item, bool isDark, ThemeData theme) {
     final id = item['id'] as String;
     final isDone = item['is_completed'] == true;
+    final taskTitle = item['task_title']?.toString() ?? 'Aktivitas';
     final city = item['city']?.toString() ?? 'Indonesia';
     final notes = item['notes']?.toString();
     final sourcePostId = item['source_post']?.toString();
@@ -713,6 +796,24 @@ class _TodoScreenState extends State<TodoScreen> {
                     ),
                   ),
 
+                  IconButton(
+                    icon: Icon(
+                      notes != null && notes.trim().isNotEmpty
+                          ? Icons.edit_note
+                          : Icons.note_add_outlined,
+                      color: notes != null && notes.trim().isNotEmpty
+                          ? AppColors.primary
+                          : AppColors.textMuted,
+                      size: 20,
+                    ),
+                    tooltip: 'Catatan Pribadi',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () =>
+                        _showEditNoteDialog(id, notes ?? '', taskTitle),
+                  ),
+                  const SizedBox(width: 8),
+
                   // Action Delete Button
                   IconButton(
                     icon: const Icon(Icons.delete_outline,
@@ -728,38 +829,44 @@ class _TodoScreenState extends State<TodoScreen> {
               // Notes section (if any)
               if (notes != null && notes.trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF0F172A).withOpacity(0.4)
-                        : const Color(0xFFFEF9C3).withOpacity(0.6),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _showEditNoteDialog(id, notes, taskTitle),
+                  child: Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
                       color: isDark
-                          ? Colors.white.withOpacity(0.04)
-                          : const Color(0xFFFDE047).withOpacity(0.5),
+                          ? const Color(0xFF0F172A).withOpacity(0.4)
+                          : const Color(0xFFFEF9C3).withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.04)
+                            : const Color(0xFFFDE047).withOpacity(0.5),
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.sticky_note_2_outlined,
-                          size: 13, color: Color(0xFFCA8A04)),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          notes,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            color: isDark
-                                ? const Color(0xFFE2E8F0)
-                                : const Color(0xFF854D0E),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.sticky_note_2_outlined,
+                            size: 13, color: Color(0xFFCA8A04)),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            notes,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: isDark
+                                  ? const Color(0xFFE2E8F0)
+                                  : const Color(0xFF854D0E),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                        const Icon(Icons.edit,
+                            size: 11, color: Color(0xFFCA8A04)),
+                      ],
+                    ),
                   ),
                 ),
               ],
