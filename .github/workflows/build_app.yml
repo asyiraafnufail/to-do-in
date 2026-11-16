@@ -1,0 +1,88 @@
+name: Build iOS IPA & Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      pb_url:
+        description: 'PocketBase Backend URL'
+        required: true
+        default: 'https://pb-dev.todoin.id'
+  push:
+    branches:
+      - main
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/build_app.yml'
+
+jobs:
+  build-ios:
+    name: Build iOS IPA (Cloud Mac)
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Build iOS Release (No Codesign)
+        working-directory: flutter_app
+        run: |
+          flutter build ios --release --no-codesign --dart-define=PB_URL=${{ inputs.pb_url || 'https://pb-dev.todoin.id' }}
+
+      - name: Package App into .ipa
+        working-directory: flutter_app/build/ios/iphoneos
+        run: |
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -r -q todoin-release.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: todoin-ios-ipa
+          path: flutter_app/build/ios/iphoneos/todoin-release.ipa
+          retention-days: 14
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Build Android APK Release
+        working-directory: flutter_app
+        run: |
+          flutter build apk --release --dart-define=PB_URL=${{ inputs.pb_url || 'https://pb-dev.todoin.id' }}
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: todoin-android-apk
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
