@@ -1,4 +1,4 @@
-name: Build iOS IPA & Android APK
+name: Build iOS IPA
 
 on:
   workflow_dispatch:
@@ -50,39 +50,4 @@ jobs:
         with:
           name: todoin-ios-ipa
           path: flutter_app/build/ios/iphoneos/todoin-release.ipa
-          retention-days: 14
-
-  build-android:
-    name: Build Android APK
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Dependencies
-        working-directory: flutter_app
-        run: flutter pub get
-
-      - name: Build Android APK Release
-        working-directory: flutter_app
-        run: |
-          flutter build apk --release --dart-define=PB_URL=${{ inputs.pb_url || 'https://pb-dev.todoin.id' }}
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: todoin-android-apk
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 14
