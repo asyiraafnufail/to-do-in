@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/date_formatter.dart';
@@ -49,32 +50,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     });
 
     try {
-      final user = await pb.collection('users').getOne(widget.userId);
-      final currentUserId = pb.authStore.record?.id;
+      final user = await authRepo.getUser(widget.userId);
+      final currentUserId = authRepo.currentUserId;
 
       // 1. Follow status
-      bool isFollowing = false;
       String? followActionId;
       if (currentUserId != null && currentUserId != widget.userId) {
-        final fCheck = await pb.collection('social_actions').getList(
-              filter:
-                  'user = "$currentUserId" && target_user = "${widget.userId}" && action_type = "follow"',
-              perPage: 1,
-            );
-        if (fCheck.items.isNotEmpty) {
-          isFollowing = true;
-          followActionId = fCheck.items.first.id;
-        }
+        followActionId = await socialRepo.getFollowActionId(
+          userId: currentUserId,
+          targetUserId: widget.userId,
+        );
       }
+      final isFollowing = followActionId != null;
 
       // 2. Posts & Travel History
-      final postRes = await pb.collection('posts').getList(
-            filter: 'author = "${widget.userId}"',
-            sort: '-created',
-            expand: 'author',
-            perPage: 50,
-          );
-      final posts = postRes.items;
+      final posts = await postRepo.getPostsByAuthor(widget.userId);
       final gpsHistory =
           posts.where((p) => p.getBoolValue('is_live_gps')).toList();
       final cities = posts
@@ -85,24 +75,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       // 3. Followers count
       int followerCount = 0;
       try {
-        final fRes = await pb.collection('social_actions').getList(
-              filter:
-                  'target_user = "${widget.userId}" && action_type = "follow"',
-              perPage: 1,
-            );
-        followerCount = fRes.totalItems;
+        followerCount = await socialRepo.getFollowerCount(widget.userId);
       } catch (_) {}
 
       // 4. Listings if host
       List<RecordModel> listings = [];
       if (user.getBoolValue('is_verified_host')) {
         try {
-          final lRes = await pb.collection('listings').getList(
-                filter: 'owner = "${widget.userId}"',
-                sort: '-created',
-                expand: 'owner',
-                perPage: 50,
-              );
+          final lRes = await listingRepo.getListings(
+            ownerId: widget.userId,
+            perPage: 50,
+          );
           listings = lRes.items;
         } catch (_) {}
       }
@@ -132,7 +115,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _toggleFollow() async {
-    final currentUserId = pb.authStore.record?.id;
+    final currentUserId = authRepo.currentUserId;
     if (currentUserId == null) {
       context.push('/login');
       return;
@@ -141,30 +124,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     setState(() => _isTogglingFollow = true);
     try {
-      if (_isFollowing && _followActionId != null) {
-        await pb.collection('social_actions').delete(_followActionId!);
-        if (mounted) {
-          setState(() {
-            _isFollowing = false;
-            _followActionId = null;
-            _followerCount = (_followerCount - 1).clamp(0, 999999);
-          });
-          feedRefreshNotifier.value++;
-        }
-      } else {
-        final action = await pb.collection('social_actions').create(body: {
-          'user': currentUserId,
-          'target_user': widget.userId,
-          'action_type': 'follow',
+      final wasFollowing = _isFollowing && _followActionId != null;
+      final newActionId = await socialRepo.toggleFollow(
+        userId: currentUserId,
+        targetUserId: widget.userId,
+        existingActionId: wasFollowing ? _followActionId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _isFollowing = newActionId != null;
+          _followActionId = newActionId;
+          _followerCount = wasFollowing
+              ? (_followerCount - 1).clamp(0, 999999)
+              : _followerCount + 1;
         });
-        if (mounted) {
-          setState(() {
-            _isFollowing = true;
-            _followActionId = action.id;
-            _followerCount++;
-          });
-          feedRefreshNotifier.value++;
-        }
       }
     } catch (_) {
     } finally {
@@ -173,7 +146,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _handleContactTap(VoidCallback onAuthorized) async {
-    if (!pb.authStore.isValid) {
+    if (!authRepo.isAuthenticated) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text(
@@ -242,7 +215,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     final user = _user!;
-    final currentUserId = pb.authStore.record?.id;
+    final currentUserId = authRepo.currentUserId;
     final isMe = currentUserId != null && currentUserId == widget.userId;
 
     final rawName = user.getStringValue('name');
@@ -291,7 +264,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         backgroundColor: AppColors.primary.withOpacity(0.15),
                         backgroundImage: avatar.isNotEmpty
                             ? CachedNetworkImageProvider(
-                                pb.files.getURL(user, avatar).toString())
+                                pbFileUrl(user, avatar))
                             : null,
                         child: avatar.isEmpty
                             ? Text(

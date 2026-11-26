@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -286,7 +287,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       return;
     }
 
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -316,7 +317,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       }
 
       if (isEdit) {
-        await pb.collection('posts').update(
+        await postRepo.updatePost(
           widget.initialPost!.id,
           body: {
             'title': _titleCtrl.text.trim(),
@@ -334,7 +335,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           files: files,
         );
 
-        feedRefreshNotifier.value++;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Perubahan cerita disimpan!')),
@@ -344,7 +344,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         return;
       }
 
-      await pb.collection('posts').create(
+      await postRepo.createPost(
         body: {
           'author': userId,
           'title': _titleCtrl.text.trim(),
@@ -365,7 +365,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         files: files,
       );
 
-      feedRefreshNotifier.value++;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Cerita berhasil diterbitkan!')),
@@ -693,10 +692,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     if (isExisting) {
                       final name = _existingImages[idx];
                       thumb = Image.network(
-                        pb.files
-                            .getURL(widget.initialPost!, name,
-                                thumb: '200x200')
-                            .toString(),
+                        pbFileUrl(widget.initialPost!, name, thumb: '200x200'),
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => const ColoredBox(
                           color: Colors.black12,

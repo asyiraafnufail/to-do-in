@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 
+import '../../../core/repositories/repositories.dart';
 import '../../../core/services/pb_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/date_formatter.dart';
@@ -61,44 +62,24 @@ class _PostCardState extends State<PostCard> {
   }
 
   Future<void> _checkStatus() async {
-    final userId = pb.authStore.record?.id;
     try {
-      final likes = await pb.collection('social_actions').getList(
-            filter:
-                'target_post = "${widget.post.id}" && action_type = "like"',
-            perPage: 100,
-          );
+      final status = await socialRepo.getPostStatus(
+        widget.post.id,
+        userId: authRepo.currentUserId,
+      );
       if (!mounted) return;
       setState(() {
-        _likeCount = likes.totalItems;
-        if (userId != null) {
-          final myLike =
-              likes.items.where((a) => a.getStringValue('user') == userId);
-          if (myLike.isNotEmpty) {
-            _isLiked = true;
-            _likeActionId = myLike.first.id;
-          }
-        }
+        _likeCount = status.likeCount;
+        _isLiked = status.isLiked;
+        _likeActionId = status.likeActionId;
+        _isBookmarked = status.isBookmarked;
+        _bookmarkActionId = status.bookmarkActionId;
       });
-
-      if (userId != null) {
-        final bms = await pb.collection('social_actions').getList(
-              filter:
-                  'target_post = "${widget.post.id}" && user = "$userId" && action_type = "bookmark"',
-              perPage: 1,
-            );
-        if (mounted && bms.items.isNotEmpty) {
-          setState(() {
-            _isBookmarked = true;
-            _bookmarkActionId = bms.items.first.id;
-          });
-        }
-      }
     } catch (_) {}
   }
 
   Future<void> _toggleLike() async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -107,28 +88,20 @@ class _PostCardState extends State<PostCard> {
 
     setState(() => _isTogglingLike = true);
     try {
-      if (_isLiked && _likeActionId != null) {
-        await pb.collection('social_actions').delete(_likeActionId!);
-        if (mounted) {
-          setState(() {
-            _isLiked = false;
-            _likeCount = (_likeCount - 1).clamp(0, 999999);
-            _likeActionId = null;
-          });
-        }
-      } else {
-        final action = await pb.collection('social_actions').create(body: {
-          'user': userId,
-          'target_post': widget.post.id,
-          'action_type': 'like',
+      final wasLiked = _isLiked && _likeActionId != null;
+      final newActionId = await socialRepo.toggleLike(
+        postId: widget.post.id,
+        userId: userId,
+        existingActionId: wasLiked ? _likeActionId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _isLiked = newActionId != null;
+          _likeActionId = newActionId;
+          _likeCount = wasLiked
+              ? (_likeCount - 1).clamp(0, 999999)
+              : _likeCount + 1;
         });
-        if (mounted) {
-          setState(() {
-            _isLiked = true;
-            _likeCount++;
-            _likeActionId = action.id;
-          });
-        }
       }
     } catch (_) {
     } finally {
@@ -137,7 +110,7 @@ class _PostCardState extends State<PostCard> {
   }
 
   Future<void> _toggleBookmark() async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -146,28 +119,17 @@ class _PostCardState extends State<PostCard> {
 
     setState(() => _isTogglingBookmark = true);
     try {
-      if (_isBookmarked && _bookmarkActionId != null) {
-        await pb.collection('social_actions').delete(_bookmarkActionId!);
-        if (mounted) {
-          setState(() {
-            _isBookmarked = false;
-            _bookmarkActionId = null;
-          });
-          savedRefreshNotifier.value++;
-        }
-      } else {
-        final action = await pb.collection('social_actions').create(body: {
-          'user': userId,
-          'target_post': widget.post.id,
-          'action_type': 'bookmark',
+      final wasBookmarked = _isBookmarked && _bookmarkActionId != null;
+      final newActionId = await socialRepo.toggleBookmark(
+        postId: widget.post.id,
+        userId: userId,
+        existingActionId: wasBookmarked ? _bookmarkActionId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _isBookmarked = newActionId != null;
+          _bookmarkActionId = newActionId;
         });
-        if (mounted) {
-          setState(() {
-            _isBookmarked = true;
-            _bookmarkActionId = action.id;
-          });
-          savedRefreshNotifier.value++;
-        }
       }
     } catch (_) {
     } finally {
@@ -190,25 +152,24 @@ class _PostCardState extends State<PostCard> {
   }
 
   Future<void> _saveTodo(String taskTitle) async {
-    final userId = pb.authStore.record?.id;
-    if (userId == null) {
+    if (authRepo.currentUserId == null) {
       final loggedIn = await context.push<bool>('/login');
       if (loggedIn != true || !mounted) return;
     }
+    final userId = authRepo.currentUserId;
+    if (userId == null) return;
 
     final city = widget.post.getStringValue('city', 'Indonesia');
     try {
-      await pb.collection('user_todos').create(body: {
-        'user': pb.authStore.record?.id,
-        'source_post': widget.post.id,
-        'city': city,
-        'task_title': taskTitle,
-        'is_completed': false,
-      });
+      await todoRepo.addTodo(
+        userId: userId,
+        sourcePostId: widget.post.id,
+        city: city,
+        taskTitle: taskTitle,
+      );
 
       if (mounted) {
         setState(() => _savedTodoItems.add(taskTitle));
-        todoRefreshNotifier.value++;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('"$taskTitle" ditambahkan ke My To-Do!'),
@@ -310,9 +271,7 @@ class _PostCardState extends State<PostCard> {
                               backgroundImage:
                                   authorAvatar.isNotEmpty && author != null
                                       ? CachedNetworkImageProvider(
-                                          pb.files
-                                              .getURL(author, authorAvatar)
-                                              .toString(),
+                                          pbFileUrl(author, authorAvatar),
                                         )
                                       : null,
                               child: authorAvatar.isEmpty
@@ -489,7 +448,7 @@ class _PostCardState extends State<PostCard> {
                   child: AspectRatio(
                     aspectRatio: 16 / 9,
                     child: CachedNetworkImage(
-                      imageUrl: pb.files.getURL(post, images.first).toString(),
+                      imageUrl: pbFileUrl(post, images.first),
                       fit: BoxFit.cover,
                       placeholder: (_, __) => Container(
                         color: AppColors.textMuted.withOpacity(0.1),

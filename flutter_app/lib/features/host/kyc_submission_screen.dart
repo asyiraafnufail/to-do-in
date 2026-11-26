@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:pocketbase/pocketbase.dart';
 
-import '../../core/services/pb_client.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/theme/app_theme.dart';
 
 class KycSubmissionScreen extends StatefulWidget {
@@ -41,7 +41,7 @@ class _KycSubmissionScreenState extends State<KycSubmissionScreen> {
   }
 
   Future<void> _checkExistingKyc() async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
@@ -49,17 +49,13 @@ class _KycSubmissionScreenState extends State<KycSubmissionScreen> {
 
     try {
       try {
-        await pb.collection('users').authRefresh();
+        await authRepo.refreshAuth();
       } catch (_) {}
-      final res = await pb.collection('kyc_requests').getList(
-            filter: 'user = "$userId"',
-            sort: '-created',
-            perPage: 1,
-          );
+      final latest = await kycRepo.getLatestUserRequest(userId);
       if (mounted) {
         setState(() {
-          if (res.items.isNotEmpty) {
-            _existingRequest = res.items.first;
+          if (latest != null) {
+            _existingRequest = latest;
           }
           _isLoading = false;
         });
@@ -108,7 +104,7 @@ class _KycSubmissionScreenState extends State<KycSubmissionScreen> {
       return;
     }
 
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -143,12 +139,9 @@ class _KycSubmissionScreenState extends State<KycSubmissionScreen> {
         ),
       ];
 
-      final created = await pb.collection('kyc_requests').create(
-        body: {
-          'user': userId,
-          'status': 'pending',
-          'admin_note': _noteCtrl.text.trim(),
-        },
+      final created = await kycRepo.submitRequest(
+        userId: userId,
+        note: _noteCtrl.text.trim(),
         files: files,
       );
 

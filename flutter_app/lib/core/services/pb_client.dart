@@ -10,6 +10,11 @@ String get kDefaultPbUrl => AppConstants.pbUrl;
 // Persistent client instance; starts with in-memory fallback, upgraded via initPb()
 PocketBase pb = PocketBase(AppConstants.pbUrl);
 
+/// Helper terpusat untuk membentuk URL file PocketBase agar layer UI tidak perlu memanggil `pb.files` langsung.
+String pbFileUrl(RecordModel record, String filename, {String? thumb}) {
+  return pb.files.getURL(record, filename, thumb: thumb).toString();
+}
+
 /// Initializes persistent authentication via SharedPreferences and AsyncAuthStore.
 Future<void> initPb() async {
   try {

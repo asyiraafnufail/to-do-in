@@ -4,10 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/date_formatter.dart';
 import '../marketplace/widgets/listing_card.dart';
+import 'widgets/post_comments_section.dart';
+import 'widgets/post_todo_recommendations_card.dart';
 
 class PostDetailScreen extends StatefulWidget {
   final String postId;
@@ -59,20 +62,16 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       _error = null;
     });
     try {
-      final post = await pb.collection('posts').getOne(
-            widget.postId,
-            expand: 'author',
-          );
+      final post = await postRepo.getPost(widget.postId);
       List<RecordModel> authorListings = [];
       final authorId = post.getStringValue('author');
       if (authorId.isNotEmpty) {
         try {
-          final lRes = await pb.collection('listings').getList(
-                filter: 'owner = "$authorId" && is_available = true',
-                sort: '-created',
-                perPage: 3,
-                expand: 'owner',
-              );
+          final lRes = await listingRepo.getListings(
+            ownerId: authorId,
+            onlyAvailable: true,
+            perPage: 3,
+          );
           authorListings = lRes.items;
         } catch (_) {}
       }
@@ -95,44 +94,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Future<void> _checkStatus() async {
-    final userId = pb.authStore.record?.id;
     try {
-      final likes = await pb.collection('social_actions').getList(
-            filter:
-                'target_post = "${widget.postId}" && action_type = "like"',
-            perPage: 100,
-          );
+      final status = await socialRepo.getPostStatus(
+        widget.postId,
+        userId: authRepo.currentUserId,
+      );
       if (!mounted) return;
       setState(() {
-        _likeCount = likes.totalItems;
-        if (userId != null) {
-          final myLike =
-              likes.items.where((a) => a.getStringValue('user') == userId);
-          if (myLike.isNotEmpty) {
-            _isLiked = true;
-            _likeActionId = myLike.first.id;
-          }
-        }
+        _likeCount = status.likeCount;
+        _isLiked = status.isLiked;
+        _likeActionId = status.likeActionId;
+        _isBookmarked = status.isBookmarked;
+        _bookmarkActionId = status.bookmarkActionId;
       });
-
-      if (userId != null) {
-        final bms = await pb.collection('social_actions').getList(
-              filter:
-                  'target_post = "${widget.postId}" && user = "$userId" && action_type = "bookmark"',
-              perPage: 1,
-            );
-        if (mounted && bms.items.isNotEmpty) {
-          setState(() {
-            _isBookmarked = true;
-            _bookmarkActionId = bms.items.first.id;
-          });
-        }
-      }
     } catch (_) {}
   }
 
   Future<void> _toggleLike() async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -141,28 +120,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
     setState(() => _isTogglingLike = true);
     try {
-      if (_isLiked && _likeActionId != null) {
-        await pb.collection('social_actions').delete(_likeActionId!);
-        if (mounted) {
-          setState(() {
-            _isLiked = false;
-            _likeCount = (_likeCount - 1).clamp(0, 999999);
-            _likeActionId = null;
-          });
-        }
-      } else {
-        final action = await pb.collection('social_actions').create(body: {
-          'user': userId,
-          'target_post': widget.postId,
-          'action_type': 'like',
+      final wasLiked = _isLiked && _likeActionId != null;
+      final newActionId = await socialRepo.toggleLike(
+        postId: widget.postId,
+        userId: userId,
+        existingActionId: wasLiked ? _likeActionId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _isLiked = newActionId != null;
+          _likeActionId = newActionId;
+          _likeCount = wasLiked
+              ? (_likeCount - 1).clamp(0, 999999)
+              : _likeCount + 1;
         });
-        if (mounted) {
-          setState(() {
-            _isLiked = true;
-            _likeCount++;
-            _likeActionId = action.id;
-          });
-        }
       }
     } catch (_) {
     } finally {
@@ -171,7 +142,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Future<void> _toggleBookmark() async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -180,28 +151,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
     setState(() => _isTogglingBookmark = true);
     try {
-      if (_isBookmarked && _bookmarkActionId != null) {
-        await pb.collection('social_actions').delete(_bookmarkActionId!);
-        if (mounted) {
-          setState(() {
-            _isBookmarked = false;
-            _bookmarkActionId = null;
-          });
-          savedRefreshNotifier.value++;
-        }
-      } else {
-        final action = await pb.collection('social_actions').create(body: {
-          'user': userId,
-          'target_post': widget.postId,
-          'action_type': 'bookmark',
+      final wasBookmarked = _isBookmarked && _bookmarkActionId != null;
+      final newActionId = await socialRepo.toggleBookmark(
+        postId: widget.postId,
+        userId: userId,
+        existingActionId: wasBookmarked ? _bookmarkActionId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _isBookmarked = newActionId != null;
+          _bookmarkActionId = newActionId;
         });
-        if (mounted) {
-          setState(() {
-            _isBookmarked = true;
-            _bookmarkActionId = action.id;
-          });
-          savedRefreshNotifier.value++;
-        }
       }
     } catch (_) {
     } finally {
@@ -212,16 +172,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   Future<void> _loadComments() async {
     setState(() => _isLoadingComments = true);
     try {
-      final res = await pb.collection('social_actions').getList(
-            filter:
-                'target_post = "${widget.postId}" && action_type = "comment"',
-            sort: 'created',
-            expand: 'user',
-            perPage: 50,
-          );
+      final items = await socialRepo.getComments(widget.postId);
       if (mounted) {
         setState(() {
-          _comments = res.items;
+          _comments = items;
           _isLoadingComments = false;
         });
       }
@@ -234,21 +188,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final text = _commentCtrl.text.trim();
     if (text.isEmpty) return;
 
-    final userId = pb.authStore.record?.id;
-    if (userId == null) {
+    if (authRepo.currentUserId == null) {
       final loggedIn = await context.push<bool>('/login');
       if (loggedIn != true || !mounted) return;
     }
+    final userId = authRepo.currentUserId;
+    if (userId == null) return;
 
     setState(() => _isSendingComment = true);
     try {
-      await pb.collection('social_actions').create(body: {
-        'user': pb.authStore.record?.id,
-        'target_post': widget.postId,
-        'action_type': 'comment',
-        'comment_body': text,
-      });
-
+      await socialRepo.addComment(
+        postId: widget.postId,
+        userId: userId,
+        body: text,
+      );
       _commentCtrl.clear();
       _loadComments();
     } catch (e) {
@@ -263,25 +216,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Future<void> _saveTodo(String taskTitle) async {
-    final userId = pb.authStore.record?.id;
-    if (userId == null) {
+    if (authRepo.currentUserId == null) {
       final loggedIn = await context.push<bool>('/login');
       if (loggedIn != true || !mounted) return;
     }
+    final userId = authRepo.currentUserId;
+    if (userId == null) return;
 
     final city = _post?.getStringValue('city', 'Indonesia') ?? 'Indonesia';
     try {
-      await pb.collection('user_todos').create(body: {
-        'user': pb.authStore.record?.id,
-        'source_post': widget.postId,
-        'city': city,
-        'task_title': taskTitle,
-        'is_completed': false,
-      });
+      await todoRepo.addTodo(
+        userId: userId,
+        sourcePostId: widget.postId,
+        city: city,
+        taskTitle: taskTitle,
+      );
 
       if (mounted) {
         setState(() => _savedTodoItems.add(taskTitle));
-        todoRefreshNotifier.value++;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('"$taskTitle" ditambahkan ke My To-Do!')),
         );
@@ -296,11 +248,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Future<void> _saveAllTodos(List<dynamic> items) async {
-    final userId = pb.authStore.record?.id;
-    if (userId == null) {
+    if (authRepo.currentUserId == null) {
       final loggedIn = await context.push<bool>('/login');
       if (loggedIn != true || !mounted) return;
     }
+    final userId = authRepo.currentUserId;
+    if (userId == null) return;
 
     final city = _post?.getStringValue('city', 'Indonesia') ?? 'Indonesia';
     int savedCount = 0;
@@ -308,13 +261,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       final taskTitle = item.toString();
       if (_savedTodoItems.contains(taskTitle)) continue;
       try {
-        await pb.collection('user_todos').create(body: {
-          'user': pb.authStore.record?.id,
-          'source_post': widget.postId,
-          'city': city,
-          'task_title': taskTitle,
-          'is_completed': false,
-        });
+        await todoRepo.addTodo(
+          userId: userId,
+          sourcePostId: widget.postId,
+          city: city,
+          taskTitle: taskTitle,
+          notify: false,
+        );
         _savedTodoItems.add(taskTitle);
         savedCount++;
       } catch (_) {}
@@ -373,8 +326,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
     if (confirm == true && mounted) {
       try {
-        await pb.collection('posts').delete(widget.postId);
-        feedRefreshNotifier.value++;
+        await postRepo.deletePost(widget.postId);
         if (mounted) {
           context.pop();
           ScaffoldMessenger.of(context).showSnackBar(
@@ -431,7 +383,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final post = _post!;
     final author = post.get<RecordModel?>('expand.author');
     final authorId = post.getStringValue('author');
-    final currentUserId = pb.authStore.record?.id;
+    final currentUserId = authRepo.currentUserId;
     final isOwnPost = currentUserId != null && currentUserId == authorId;
 
     final name = author?.getStringValue('name') ?? '';
@@ -523,14 +475,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                     radius: 22,
                                     backgroundColor:
                                         AppColors.primary.withOpacity(0.12),
-                                    backgroundImage: authorAvatar.isNotEmpty &&
-                                            author != null
-                                        ? CachedNetworkImageProvider(
-                                            pb.files
-                                                .getURL(author, authorAvatar)
-                                                .toString(),
-                                          )
-                                        : null,
+                                    backgroundImage:
+                                        authorAvatar.isNotEmpty && author != null
+                                            ? CachedNetworkImageProvider(
+                                                pbFileUrl(author, authorAvatar),
+                                              )
+                                            : null,
                                     child: authorAvatar.isEmpty
                                         ? Text(
                                             authorName.isNotEmpty
@@ -595,7 +545,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
-                                  AppColors.primary.withOpacity(isDark ? 0.22 : 0.12),
+                                  AppColors.primary
+                                      .withOpacity(isDark ? 0.22 : 0.12),
                                   const Color(0xFF0D9488)
                                       .withOpacity(isDark ? 0.14 : 0.05),
                                 ],
@@ -700,9 +651,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                 child: AspectRatio(
                                   aspectRatio: 4 / 3,
                                   child: CachedNetworkImage(
-                                    imageUrl: pb.files
-                                        .getURL(post, images[idx])
-                                        .toString(),
+                                    imageUrl: pbFileUrl(post, images[idx]),
                                     fit: BoxFit.cover,
                                   ),
                                 ),
@@ -725,127 +674,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
                       // Blok Rekomendasi To-Do Penulis Lengkap
                       if (todoItems.isNotEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(
-                                      child: Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.playlist_add_check,
-                                            color: AppColors.accent,
-                                            size: 22,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Flexible(
-                                            child: Text(
-                                              'Rekomendasi To-Do Penulis',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    TextButton.icon(
-                                      icon: const Icon(Icons.copy_all,
-                                          size: 16),
-                                      label: const Text('Salin Semua',
-                                          style: TextStyle(fontSize: 12)),
-                                      onPressed: () =>
-                                          _saveAllTodos(todoItems),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                const Text(
-                                  'Aktivitas praktis dari cerita ini. Tekan tombol untuk menyimpan ke checklist My To-Do Anda.',
-                                  style: TextStyle(
-                                      fontSize: 12, color: AppColors.textMuted),
-                                ),
-                                const SizedBox(height: 12),
-                                ...todoItems.map((item) {
-                                  final taskText = item.toString();
-                                  final isSaved =
-                                      _savedTodoItems.contains(taskText);
-
-                                  return Container(
-                                    margin: const EdgeInsets.only(top: 8),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    decoration: BoxDecoration(
-                                      color: isDark
-                                          ? const Color(0xFF1E293B)
-                                          : const Color(0xFFF8FAFC),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: isDark
-                                            ? const Color(0xFF334155)
-                                            : const Color(0xFFE2E8F0),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Icon(Icons.circle,
-                                            size: 8, color: AppColors.accent),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            taskText,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        FilledButton.tonalIcon(
-                                          style: FilledButton.styleFrom(
-                                            minimumSize: const Size(0, 32),
-                                            padding:
-                                                const EdgeInsets.symmetric(
-                                                    horizontal: 10),
-                                            backgroundColor: isSaved
-                                                ? AppColors.liveGpsBg
-                                                : null,
-                                            foregroundColor: isSaved
-                                                ? AppColors.liveGpsFg
-                                                : null,
-                                          ),
-                                          icon: Icon(
-                                            isSaved
-                                                ? Icons.check
-                                                : Icons.add_task,
-                                            size: 14,
-                                          ),
-                                          label: Text(
-                                            isSaved ? 'Tersimpan' : 'To-Do',
-                                            style: const TextStyle(
-                                                fontSize: 11.5,
-                                                fontWeight: FontWeight.w700),
-                                          ),
-                                          onPressed: isSaved
-                                              ? null
-                                              : () => _saveTodo(taskText),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                              ],
-                            ),
-                          ),
+                        PostTodoRecommendationsCard(
+                          todoItems: todoItems,
+                          savedTodoItems: _savedTodoItems,
+                          isDark: isDark,
+                          onSaveTodo: _saveTodo,
+                          onSaveAll: _saveAllTodos,
                         ),
-                      // Layanan Penulis (User Flow 2.2 Conversion Loop)
+
+                      // Layanan Penulis
                       if (_authorListings.isNotEmpty) ...[
                         const SizedBox(height: 20),
                         Row(
@@ -883,166 +720,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       const SizedBox(height: 12),
 
                       // Diskusi / Komentar
-                      Text(
-                        'Diskusi (${_comments.length})',
-                        style: theme.textTheme.titleMedium,
+                      PostCommentsSection(
+                        comments: _comments,
+                        isLoading: _isLoadingComments,
+                        isDark: isDark,
                       ),
-                      const SizedBox(height: 12),
-                      if (_isLoadingComments)
-                        const Center(child: CircularProgressIndicator())
-                      else if (_comments.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Text(
-                            'Belum ada komentar. Jadilah yang pertama berkomentar!',
-                            style: TextStyle(color: AppColors.textMuted),
-                          ),
-                        )
-                      else
-                        ..._comments.map((c) {
-                          final user = c.get<RecordModel?>('expand.user');
-                          final rawName = user?.getStringValue('name') ?? '';
-                          final rawUser =
-                              user?.getStringValue('username') ?? '';
-                          final uName = rawName.isNotEmpty
-                              ? rawName
-                              : (rawUser.isNotEmpty ? '@$rawUser' : 'Traveler');
-                          final uAvatar =
-                              user?.getStringValue('avatar') ?? '';
-                          final commentText =
-                              c.getStringValue('comment_body');
-                          final cDate = c.getStringValue('created');
-
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor:
-                                      AppColors.primary.withOpacity(0.12),
-                                  backgroundImage: uAvatar.isNotEmpty &&
-                                          user != null
-                                      ? CachedNetworkImageProvider(
-                                          pb.files
-                                              .getURL(user, uAvatar)
-                                              .toString(),
-                                        )
-                                      : null,
-                                  child: uAvatar.isEmpty
-                                      ? Text(
-                                          uName.isNotEmpty
-                                              ? uName[0].toUpperCase()
-                                              : 'T',
-                                          style: const TextStyle(
-                                            color: AppColors.primary,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 12,
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: isDark
-                                          ? const Color(0xFF1E293B)
-                                          : const Color(0xFFF1F5F9),
-                                      borderRadius:
-                                          BorderRadius.circular(8),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Flexible(
-                                              child: Text(
-                                                uName,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 12.5,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              DateFormatter.timeAgo(cDate),
-                                              style: const TextStyle(
-                                                color: AppColors.textMuted,
-                                                fontSize: 10.5,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          commentText,
-                                          style: const TextStyle(
-                                              fontSize: 13, height: 1.35),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
                       const SizedBox(height: 16),
                     ],
                   ),
                 ),
-
-                // Comment Input Box at bottom
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardTheme.color,
-                    border: Border(
-                      top: BorderSide(
-                        color: isDark
-                            ? AppColors.borderDark
-                            : AppColors.borderLight,
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _commentCtrl,
-                          minLines: 1,
-                          maxLines: 3,
-                          decoration: const InputDecoration(
-                            hintText: 'Tulis tanggapan atau tanya rute...',
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        icon: _isSendingComment
-                            ? const SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.send, size: 18),
-                        onPressed: _isSendingComment ? null : _sendComment,
-                      ),
-                    ],
-                  ),
+                PostCommentInputBar(
+                  controller: _commentCtrl,
+                  isSending: _isSendingComment,
+                  isDark: isDark,
+                  onSend: _sendComment,
                 ),
               ],
             ),

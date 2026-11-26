@@ -1,19 +1,17 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
 import 'package:pocketbase/pocketbase.dart';
 
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/date_formatter.dart';
 import '../feed/widgets/post_card.dart';
 import '../marketplace/widgets/listing_card.dart';
+import 'widgets/edit_profile_dialog.dart';
+import 'widgets/profile_gps_history_tab.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -27,6 +25,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isLoading = false;
   bool _isRefreshingAuth = false;
+  bool _sendingVerification = false;
   List<RecordModel> _myPosts = [];
   List<RecordModel> _gpsHistory = [];
   List<RecordModel> _savedPosts = [];
@@ -37,7 +36,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _authSub = pb.authStore.onChange.listen((_) {
+    _authSub = authRepo.onAuthChanged.listen((_) {
       if (mounted && !_isRefreshingAuth) _loadUserData();
     });
     feedRefreshNotifier.addListener(_loadUserData);
@@ -56,7 +55,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadUserData({bool refreshAuth = false}) async {
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       if (mounted) {
         setState(() {
@@ -76,7 +75,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (refreshAuth) {
       _isRefreshingAuth = true;
       try {
-        await pb.collection('users').authRefresh();
+        await authRepo.refreshAuth();
       } catch (_) {
       } finally {
         _isRefreshingAuth = false;
@@ -84,13 +83,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     try {
       // 1. My posts (Feeds & Travel History)
-      final postRes = await pb.collection('posts').getList(
-            filter: 'author = "$userId"',
-            sort: '-created',
-            expand: 'author',
-            perPage: 50,
-          );
-      final myPosts = postRes.items;
+      final myPosts = await postRepo.getPostsByAuthor(userId);
       final gpsHistory =
           myPosts.where((p) => p.getBoolValue('is_live_gps')).toList();
 
@@ -102,52 +95,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // 2. Followers count
       int followersCount = 0;
       try {
-        final fRes = await pb.collection('social_actions').getList(
-              filter:
-                  'target_user = "$userId" && action_type = "follow"',
-              perPage: 1,
-            );
-        followersCount = fRes.totalItems;
+        followersCount = await socialRepo.getFollowerCount(userId);
       } catch (_) {}
 
       // 3. Saved bookmarked posts
       List<RecordModel> savedPosts = [];
       try {
-        final bRes = await pb.collection('social_actions').getList(
-              filter: 'user = "$userId" && action_type = "bookmark"',
-              sort: '-created',
-              perPage: 50,
-            );
-        final postIds = bRes.items
-            .map((b) => b.getStringValue('target_post'))
-            .where((id) => id.isNotEmpty)
-            .toList();
-
+        final postIds = await socialRepo.getBookmarkedPostIds(userId);
         if (postIds.isNotEmpty) {
-          final filter =
-              postIds.map((id) => 'id = "$id"').join(' || ');
-          final savedRes = await pb.collection('posts').getList(
-                filter: filter,
-                expand: 'author',
-                perPage: 50,
-              );
-          final postMap = {for (var p in savedRes.items) p.id: p};
-          savedPosts = postIds
-              .where(postMap.containsKey)
-              .map((id) => postMap[id]!)
-              .toList();
+          savedPosts = await postRepo.getPostsByIds(postIds);
         }
       } catch (_) {}
 
       // 4. My listings
       List<RecordModel> myListings = [];
       try {
-        final lRes = await pb.collection('listings').getList(
-              filter: 'owner = "$userId"',
-              sort: '-created',
-              expand: 'owner',
-              perPage: 50,
-            );
+        final lRes = await listingRepo.getListings(ownerId: userId, perPage: 50);
         myListings = lRes.items;
       } catch (_) {}
 
@@ -167,13 +130,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  bool _sendingVerification = false;
-
   Future<void> _resendVerification(String email) async {
     if (email.isEmpty || _sendingVerification) return;
     setState(() => _sendingVerification = true);
     try {
-      await pb.collection('users').requestVerification(email);
+      await authRepo.requestVerification(email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Email verifikasi dikirim ke $email.')),
@@ -187,6 +148,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } finally {
       if (mounted) setState(() => _sendingVerification = false);
+    }
+  }
+
+  Future<void> _openEditProfileDialog(Map<String, dynamic> data) async {
+    final updated = await showEditProfileDialog(context, data: data);
+    if (updated && mounted) {
+      _loadUserData();
     }
   }
 
@@ -229,8 +197,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final user = pb.authStore.record;
-    if (!pb.authStore.isValid || user == null) {
+    final user = authRepo.currentUser;
+    if (!authRepo.isAuthenticated || user == null) {
       return Scaffold(
         appBar: AppBar(
           centerTitle: true,
@@ -282,11 +250,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         data['is_verified_host'] == true ||
         data['is_verified_host'] == 1 ||
         data['is_verified_host'] == 'true';
-    final isSuperuser = user.collectionName == '_superusers' ||
-        user.collectionName == 'admins' ||
-        user.getBoolValue('is_admin') ||
-        data['collectionName'] == '_superusers' ||
-        data['collectionName'] == 'admins';
+    final isSuperuser = authRepo.isSuperuserOrAdmin(user);
     final name = (data['name'] as String?)?.isNotEmpty == true
         ? data['name'] as String
         : data['username'] as String? ?? 'Traveler';
@@ -317,7 +281,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               icon: const Icon(Icons.logout),
               tooltip: 'Keluar',
               onPressed: () {
-                pb.authStore.clear();
+                authRepo.logout();
                 _loadUserData();
               },
             ),
@@ -336,12 +300,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         CircleAvatar(
                           radius: 32,
-                          backgroundColor:
-                              AppColors.primary.withOpacity(0.15),
-                          backgroundImage: (data['avatar'] as String?)?.isNotEmpty == true
-                              ? CachedNetworkImageProvider(
-                                  pb.files.getURL(user, data['avatar'] as String).toString())
-                              : null,
+                          backgroundColor: AppColors.primary.withOpacity(0.15),
+                          backgroundImage:
+                              (data['avatar'] as String?)?.isNotEmpty == true
+                                  ? CachedNetworkImageProvider(
+                                      pbFileUrl(user, data['avatar'] as String))
+                                  : null,
                           child: (data['avatar'] as String?)?.isNotEmpty == true
                               ? null
                               : Text(
@@ -391,7 +355,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: () => _showEditProfileDialog(data),
+                            onPressed: () => _openEditProfileDialog(data),
                             child: const Text('Edit Profil'),
                           ),
                         ),
@@ -404,7 +368,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
 
-                    // Banner verifikasi email (hanya untuk akun users yang belum terverifikasi)
                     if (!isSuperuser &&
                         user.collectionName == 'users' &&
                         !user.getBoolValue('verified')) ...[
@@ -418,7 +381,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          icon: const Icon(Icons.admin_panel_settings_outlined, size: 18),
+                          icon: const Icon(Icons.admin_panel_settings_outlined,
+                              size: 18),
                           label: const Text('Buka Admin Panel (Superuser)'),
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF0F172A),
@@ -428,7 +392,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ],
 
-                    // KYC Local Host Verification Callout (if not yet verified)
                     if (!isVerifiedHost) ...[
                       const SizedBox(height: 12),
                       InkWell(
@@ -506,8 +469,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Expanded(
                 child: TabBarView(
                   children: [
-                    _buildPostsTab(_myPosts, 'Belum ada cerita yang Anda tulis.'),
-                    _buildGpsHistoryTab(),
+                    _buildPostsTab(
+                        _myPosts, 'Belum ada cerita yang Anda tulis.'),
+                    ProfileGpsHistoryTab(
+                      gpsHistory: _gpsHistory,
+                      isLoading: _isLoading,
+                    ),
                     _buildPostsTab(
                         _savedPosts, 'Belum ada cerita yang disimpan.'),
                     if (isVerifiedHost) _buildMyListingsTab(),
@@ -575,170 +542,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildGpsHistoryTab() {
-    if (_isLoading && _gpsHistory.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_gpsHistory.isEmpty) {
-      return ListView(
-        children: const [
-          SizedBox(
-            height: 260,
-            child: Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.gps_fixed,
-                        size: 44, color: AppColors.textMuted),
-                    SizedBox(height: 12),
-                    Text(
-                      'Travel History Terverifikasi Kosong',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                    ),
-                    SizedBox(height: 6),
-                    Text(
-                      'Saat membuat cerita dengan tombol Live GPS aktif di lokasi wisata, jejak perjalanan Anda akan otomatis tercatat di sini.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 680),
-        child: ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: _gpsHistory.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 10),
-          itemBuilder: (context, index) {
-            final p = _gpsHistory[index];
-            final placeName = p.getStringValue('place_name');
-            final city = p.getStringValue('city');
-            final province = p.getStringValue('province');
-            final lat = p.getDoubleValue('lat_approx');
-            final lng = p.getDoubleValue('lng_approx');
-            final created = p.getStringValue('created');
-            final category = p.getStringValue('category');
-
-            return Card(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => context.push('/post/${p.id}'),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? const Color(0xFF052E16)
-                              : AppColors.liveGpsBg,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.gps_fixed,
-                            color: AppColors.liveGpsFg, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    placeName.isNotEmpty ? placeName : city,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        AppColors.primary.withOpacity(0.08),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    category,
-                                    style: const TextStyle(
-                                      color: AppColors.primary,
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '$city, $province',
-                              style: const TextStyle(
-                                color: AppColors.textSecondaryLight,
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Text(
-                                  DateFormatter.timeAgo(created),
-                                  style: const TextStyle(
-                                    color: AppColors.textMuted,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                                if (lat != 0.0 && lng != 0.0) ...[
-                                  const Text(' • ',
-                                      style: TextStyle(
-                                          color: AppColors.textMuted,
-                                          fontSize: 11)),
-                                  Text(
-                                    '($lat, $lng)',
-                                    style: const TextStyle(
-                                      color: AppColors.liveGpsFg,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
   Widget _buildMyListingsTab() {
     return Align(
       alignment: Alignment.topCenter,
@@ -794,194 +597,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               )
             else
-              ..._myListings.map(
-                  (l) => ListingCard(key: ValueKey(l.id), listing: l)),
+              ..._myListings
+                  .map((l) => ListingCard(key: ValueKey(l.id), listing: l)),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showEditProfileDialog(Map<String, dynamic> data) {
-    final user = pb.authStore.record;
-    final nameCtrl = TextEditingController(text: data['name'] ?? '');
-    final bioCtrl = TextEditingController(text: data['bio'] ?? '');
-    final waCtrl = TextEditingController(text: data['whatsapp'] ?? '');
-    final igCtrl = TextEditingController(text: data['instagram'] ?? '');
-    String privacy = (data['contact_privacy'] as String?)?.isNotEmpty == true
-        ? data['contact_privacy'] as String
-        : 'public';
-    XFile? pickedAvatar;
-    bool isSaving = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final currentAvatar = data['avatar'] as String? ?? '';
-
-          return AlertDialog(
-            title: const Text('Edit Profil'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Center(
-                    child: Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 40,
-                          backgroundColor: AppColors.primary.withOpacity(0.15),
-                          backgroundImage: pickedAvatar != null
-                              ? (kIsWeb
-                                  ? NetworkImage(pickedAvatar!.path)
-                                  : FileImage(File(pickedAvatar!.path))
-                                      as ImageProvider)
-                              : (currentAvatar.isNotEmpty && user != null
-                                  ? CachedNetworkImageProvider(
-                                      pb.files.getURL(user, currentAvatar).toString())
-                                  : null),
-                          child: (pickedAvatar == null && currentAvatar.isEmpty)
-                              ? const Icon(Icons.person,
-                                  size: 40, color: AppColors.primary)
-                              : null,
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: InkWell(
-                            onTap: () async {
-                              final picker = ImagePicker();
-                              final img = await picker.pickImage(
-                                source: ImageSource.gallery,
-                                maxWidth: 600,
-                                maxHeight: 600,
-                                imageQuality: 80,
-                              );
-                              if (img != null) {
-                                setDialogState(() => pickedAvatar = img);
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: const BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.camera_alt,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(labelText: 'Nama Tampilan'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: bioCtrl,
-                    maxLength: 160,
-                    maxLines: 2,
-                    decoration: const InputDecoration(labelText: 'Bio'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: waCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Nomor WhatsApp',
-                      hintText: '628123456789',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: igCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Username Instagram',
-                      prefixText: '@',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: privacy,
-                    isExpanded: true,
-                    borderRadius: BorderRadius.circular(10),
-                    decoration:
-                        const InputDecoration(labelText: 'Privasi Kontak'),
-                    items: const [
-                      DropdownMenuItem(value: 'public', child: Text('Publik')),
-                      DropdownMenuItem(
-                          value: 'followers', child: Text('Hanya Pengikut')),
-                      DropdownMenuItem(
-                          value: 'hidden', child: Text('Sembunyikan')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setDialogState(() => privacy = v);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal'),
-              ),
-              FilledButton(
-                onPressed: isSaving
-                    ? null
-                    : () async {
-                        final userId = pb.authStore.record?.id;
-                        if (userId == null) return;
-                        setDialogState(() => isSaving = true);
-                        try {
-                          final files = <http.MultipartFile>[];
-                          if (pickedAvatar != null) {
-                            final bytes = await pickedAvatar!.readAsBytes();
-                            files.add(http.MultipartFile.fromBytes(
-                              'avatar',
-                              bytes,
-                              filename: pickedAvatar!.name,
-                            ));
-                          }
-                          final updated = await pb.collection('users').update(
-                            userId,
-                            body: {
-                              'name': nameCtrl.text.trim(),
-                              'bio': bioCtrl.text.trim(),
-                              'whatsapp': waCtrl.text.trim(),
-                              'instagram': igCtrl.text.trim(),
-                              'contact_privacy': privacy,
-                            },
-                            files: files,
-                          );
-                          pb.authStore.save(pb.authStore.token, updated);
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          _loadUserData();
-                        } catch (_) {
-                          if (ctx.mounted) {
-                            setDialogState(() => isSaving = false);
-                          }
-                        }
-                      },
-                child: isSaving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('Simpan'),
-              ),
-            ],
-          );
-        },
       ),
     );
   }

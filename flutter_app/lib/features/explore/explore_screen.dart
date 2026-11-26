@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../feed/widgets/post_card.dart';
@@ -45,25 +46,16 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Future<void> _fetchData() async {
     setState(() => _isLoading = true);
     try {
-      final q = _searchCtrl.text.trim().replaceAll('"', '\\"');
+      final q = _searchCtrl.text.trim();
 
       if (_activeTab == 'posts') {
-        final parts = <String>[];
-        if (_selectedProvince != null) {
-          parts.add('province = "${_selectedProvince!}"');
-        }
-        if (q.isNotEmpty) {
-          parts.add('(title ~ "$q" || place_name ~ "$q" || city ~ "$q")');
-        }
-        final filter = parts.join(' && ');
-
-        final res = await pb.collection('posts').getList(
-              page: 1,
-              perPage: 30,
-              sort: '-created',
-              expand: 'author',
-              filter: filter,
-            );
+        final res = await postRepo.getPosts(
+          page: 1,
+          perPage: 30,
+          province: _selectedProvince,
+          query: q,
+          searchContent: false,
+        );
         if (mounted) {
           setState(() {
             _posts = res.items;
@@ -71,26 +63,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
           });
         }
       } else {
-        // listings
-        final parts = <String>[];
-        if (_selectedProvince != null) {
-          parts.add('province = "${_selectedProvince!}"');
-        }
-        if (_listingType != null) {
-          parts.add('type = "${_listingType!}"');
-        }
-        if (q.isNotEmpty) {
-          parts.add('(title ~ "$q" || city ~ "$q")');
-        }
-        final filter = parts.join(' && ');
-
-        final res = await pb.collection('listings').getList(
-              page: 1,
-              perPage: 30,
-              sort: '-created',
-              expand: 'owner',
-              filter: filter,
-            );
+        final res = await listingRepo.getListings(
+          page: 1,
+          perPage: 30,
+          province: _selectedProvince,
+          type: _listingType,
+          query: q,
+        );
         if (mounted) {
           setState(() {
             _listings = res.items;

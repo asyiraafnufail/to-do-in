@@ -122,8 +122,7 @@ class ListingCard extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         CachedNetworkImage(
-                          imageUrl:
-                              pb.files.getURL(listing, images.first).toString(),
+                          imageUrl: pbFileUrl(listing, images.first),
                           fit: BoxFit.cover,
                           placeholder: (_, __) => Container(
                             color: AppColors.textMuted.withOpacity(0.1),
@@ -321,9 +320,8 @@ class ListingCard extends StatelessWidget {
                                   typeColor.withOpacity(0.15),
                               backgroundImage: ownerAvatar.isNotEmpty &&
                                       owner != null
-                                  ? CachedNetworkImageProvider(pb.files
-                                      .getURL(owner, ownerAvatar)
-                                      .toString())
+                                  ? CachedNetworkImageProvider(
+                                      pbFileUrl(owner, ownerAvatar))
                                   : null,
                               child: ownerAvatar.isEmpty
                                   ? Text(

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 import 'widgets/post_card.dart';
@@ -53,7 +54,7 @@ class _FeedScreenState extends State<FeedScreen>
         _loadFeed();
       }
     });
-    _authSub = pb.authStore.onChange.listen((_) {
+    _authSub = authRepo.onAuthChanged.listen((_) {
       if (mounted) _loadFeed();
     });
     feedRefreshNotifier.addListener(_loadFeed);
@@ -75,41 +76,7 @@ class _FeedScreenState extends State<FeedScreen>
   bool get _hasActiveFilter =>
       _selectedCategory != null || _selectedProvince != null || _query.isNotEmpty;
 
-  /// Menyusun filter dasar (kategori, provinsi, kata kunci) secara aman.
-  String _baseFilter() {
-    final parts = <String>[];
-    if (_selectedCategory != null) {
-      parts.add(pb.filter('category = {:cat}', {'cat': _selectedCategory}));
-    }
-    if (_selectedProvince != null) {
-      parts.add(pb.filter('province = {:prov}', {'prov': _selectedProvince}));
-    }
-    if (_query.isNotEmpty) {
-      parts.add(pb.filter(
-        '(title ~ {:q} || content ~ {:q} || place_name ~ {:q} || city ~ {:q})',
-        {'q': _query},
-      ));
-    }
-    return parts.join(' && ');
-  }
-
-  /// Filter penulis yang diikuti; null jika belum login / belum mengikuti siapa pun.
-  Future<String?> _followingFilter() async {
-    final userId = pb.authStore.record?.id;
-    if (userId == null) return null;
-    final follows = await pb.collection('social_actions').getFullList(
-          filter: pb.filter(
-              'user = {:uid} && action_type = "follow"', {'uid': userId}),
-        );
-    final ids = follows
-        .map((f) => f.getStringValue('target_user'))
-        .where((id) => id.isNotEmpty)
-        .toList();
-    if (ids.isEmpty) return null;
-    return '(${ids.map((id) => pb.filter('author = {:id}', {'id': id})).join(' || ')})';
-  }
-
-  String? _followCache;
+  List<String>? _followedIdsCache;
 
   /// Muat ulang dari halaman pertama untuk tab aktif.
   Future<void> _loadFeed() async {
@@ -125,8 +92,12 @@ class _FeedScreenState extends State<FeedScreen>
 
     try {
       if (isFollowingTab) {
-        _followCache = await _followingFilter();
-        if (_followCache == null) {
+        final userId = authRepo.currentUserId;
+        final ids = userId != null
+            ? await socialRepo.getFollowedUserIds(userId)
+            : <String>[];
+        _followedIdsCache = ids;
+        if (ids.isEmpty) {
           if (mounted && token == target.token) {
             setState(() {
               target.items = [];
@@ -157,7 +128,10 @@ class _FeedScreenState extends State<FeedScreen>
     final target = _current;
     final isFollowingTab = target == _following;
     if (target.isLoading || target.isLoadingMore || !target.hasMore) return;
-    if (isFollowingTab && _followCache == null) return;
+    if (isFollowingTab &&
+        (_followedIdsCache == null || _followedIdsCache!.isEmpty)) {
+      return;
+    }
 
     final token = target.token;
     setState(() => target.isLoadingMore = true);
@@ -180,17 +154,14 @@ class _FeedScreenState extends State<FeedScreen>
   }
 
   Future<ResultList<RecordModel>> _fetchPage(int page, bool isFollowingTab) {
-    final base = _baseFilter();
-    final filter = isFollowingTab
-        ? [_followCache!, if (base.isNotEmpty) base].join(' && ')
-        : base;
-    return pb.collection('posts').getList(
-          page: page,
-          perPage: _perPage,
-          sort: '-created',
-          expand: 'author',
-          filter: filter,
-        );
+    return postRepo.getPosts(
+      page: page,
+      perPage: _perPage,
+      category: _selectedCategory,
+      province: _selectedProvince,
+      query: _query,
+      authorIds: isFollowingTab ? _followedIdsCache : null,
+    );
   }
 
   void _onSearchChanged(String value) {
@@ -650,7 +621,7 @@ class _FeedScreenState extends State<FeedScreen>
   }
 
   Widget _buildFollowingTab() {
-    if (!pb.authStore.isValid) {
+    if (!authRepo.isAuthenticated) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),

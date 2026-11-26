@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/repositories/repositories.dart';
 import '../../core/services/pb_client.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -37,10 +38,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     });
 
     try {
-      final record = await pb.collection('listings').getOne(
-            widget.listingId,
-            expand: 'owner',
-          );
+      final record = await listingRepo.getListing(widget.listingId);
       if (mounted) {
         setState(() {
           _listing = record;
@@ -109,12 +107,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (_isUpdatingAvail || _listing == null) return;
     setState(() => _isUpdatingAvail = true);
     try {
-      final updated = await pb.collection('listings').update(
-        _listing!.id,
-        body: {'is_available': nextVal},
-        expand: 'owner',
-      );
-      listingsRefreshNotifier.value++;
+      final updated =
+          await listingRepo.setAvailability(_listing!.id, nextVal);
       if (mounted) {
         setState(() => _listing = updated);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -140,21 +134,20 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   Future<void> _saveListingToTodo(String title, String city) async {
     if (_isSavingTodo || _isSavedToTodo) return;
-    final userId = pb.authStore.record?.id;
-    if (userId == null) {
+    if (authRepo.currentUserId == null) {
       final loggedIn = await context.push<bool>('/login');
       if (loggedIn != true || !mounted) return;
     }
+    final userId = authRepo.currentUserId;
+    if (userId == null) return;
 
     setState(() => _isSavingTodo = true);
     try {
-      await pb.collection('user_todos').create(body: {
-        'user': pb.authStore.record?.id,
-        'city': city.isNotEmpty ? city : 'Indonesia',
-        'task_title': 'Layanan: $title',
-        'is_completed': false,
-      });
-      todoRefreshNotifier.value++;
+      await todoRepo.addTodo(
+        userId: userId,
+        city: city.isNotEmpty ? city : 'Indonesia',
+        taskTitle: 'Layanan: $title',
+      );
       if (mounted) {
         setState(() => _isSavedToTodo = true);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -201,8 +194,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
     if (confirm == true && mounted) {
       try {
-        await pb.collection('listings').delete(widget.listingId);
-        listingsRefreshNotifier.value++;
+        await listingRepo.deleteListing(widget.listingId);
         if (mounted) {
           context.pop();
           ScaffoldMessenger.of(context).showSnackBar(
@@ -259,7 +251,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final listing = _listing!;
     final owner = listing.get<RecordModel?>('expand.owner');
     final ownerId = listing.getStringValue('owner');
-    final currentUserId = pb.authStore.record?.id;
+    final currentUserId = authRepo.currentUserId;
     final isOwnListing = currentUserId != null && currentUserId == ownerId;
 
     final rawOwnerName = owner?.getStringValue('name') ?? '';
@@ -332,9 +324,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 child: AspectRatio(
                                   aspectRatio: 16 / 10,
                                   child: CachedNetworkImage(
-                                    imageUrl: pb.files
-                                        .getURL(listing, images[idx])
-                                        .toString(),
+                                    imageUrl: pbFileUrl(listing, images[idx]),
                                     fit: BoxFit.cover,
                                   ),
                                 ),
@@ -602,9 +592,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                       AppColors.primary.withOpacity(0.12),
                                   backgroundImage: ownerAvatar.isNotEmpty &&
                                           owner != null
-                                      ? CachedNetworkImageProvider(pb.files
-                                          .getURL(owner, ownerAvatar)
-                                          .toString())
+                                      ? CachedNetworkImageProvider(
+                                          pbFileUrl(owner, ownerAvatar))
                                       : null,
                                   child: ownerAvatar.isEmpty
                                       ? Text(

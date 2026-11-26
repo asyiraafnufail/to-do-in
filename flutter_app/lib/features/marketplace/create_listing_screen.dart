@@ -7,7 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../../core/constants/app_constants.dart';
-import '../../core/services/pb_client.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/theme/app_theme.dart';
 
 class CreateListingScreen extends StatefulWidget {
@@ -134,7 +134,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   Future<void> _submitListing() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final userId = pb.authStore.record?.id;
+    final userId = authRepo.currentUserId;
     if (userId == null) {
       context.push('/login');
       return;
@@ -165,7 +165,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
       }
 
       if (widget.initialListing != null) {
-        await pb.collection('listings').update(
+        await listingRepo.updateListing(
           widget.initialListing!.id,
           body: {
             'type': _type,
@@ -180,8 +180,6 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
           files: files,
         );
 
-        listingsRefreshNotifier.value++;
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Perubahan layanan disimpan!')),
@@ -191,7 +189,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         return;
       }
 
-      await pb.collection('listings').create(
+      await listingRepo.createListing(
         body: {
           'owner': userId,
           'type': _type,
@@ -206,8 +204,6 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
         },
         files: files,
       );
-
-      listingsRefreshNotifier.value++;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

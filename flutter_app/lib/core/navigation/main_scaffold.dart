@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../services/pb_client.dart';
+import '../repositories/repositories.dart';
 import '../theme/app_theme.dart';
 
 class MainScaffold extends StatelessWidget {
@@ -439,7 +439,7 @@ class MainScaffold extends StatelessWidget {
 
   void _openCreateOptions(BuildContext context) {
     final isVerifiedHost =
-        pb.authStore.record?.getBoolValue('is_verified_host') ?? false;
+        authRepo.currentUser?.getBoolValue('is_verified_host') ?? false;
 
     showModalBottomSheet(
       context: context,
@@ -471,7 +471,7 @@ class MainScaffold extends StatelessWidget {
                   'Bagikan cerita perjalanan dengan validasi Live GPS.'),
               onTap: () async {
                 Navigator.pop(ctx);
-                if (!pb.authStore.isValid) {
+                if (!authRepo.isAuthenticated) {
                   final loggedIn = await context.push<bool>('/login');
                   if (loggedIn != true || !context.mounted) return;
                 }

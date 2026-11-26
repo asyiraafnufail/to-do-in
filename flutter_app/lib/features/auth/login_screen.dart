@@ -3,7 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:pocketbase/pocketbase.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/services/pb_client.dart';
+import '../../core/repositories/repositories.dart';
 import '../../core/theme/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -57,19 +57,12 @@ class _LoginScreenState extends State<LoginScreen> {
           });
           return;
         }
-        await pb.collection('users').create(body: {
-          'email': email,
-          'password': password,
-          'passwordConfirm': password,
-          'username': username,
-          'name': _nameCtrl.text.trim(),
-          'contact_privacy': 'public',
-        });
-        await pb.collection('users').authWithPassword(email, password);
-        // Kirim email verifikasi (gagal diam-diam bila SMTP belum dikonfigurasi)
-        try {
-          await pb.collection('users').requestVerification(email);
-        } catch (_) {}
+        await authRepo.register(
+          email: email,
+          password: password,
+          username: username,
+          name: _nameCtrl.text.trim(),
+        );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -86,46 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // 1. Coba login sebagai Superuser / Admin
-      bool isAdmin = false;
-
-      // 1a. Cek PocketBase v0.23+ _superusers
-      try {
-        await pb.collection('_superusers').authWithPassword(email, password);
-        isAdmin = pb.authStore.isValid;
-      } catch (_) {
-        // 1b. Cek PocketBase legacy admin endpoint
-        try {
-          final res = await pb.send('/api/admins/auth-with-password',
-              method: 'POST',
-              body: {'identity': email, 'password': password});
-          if (res is Map && res['token'] != null) {
-            final token = res['token'] as String;
-            final adminData = (res['admin'] as Map<String, dynamic>?) ?? {};
-            pb.authStore.save(
-              token,
-              RecordModel({
-                ...adminData,
-                'id': adminData['id'] ?? 'admin',
-                'email': email,
-                'collectionName': '_superusers',
-              }),
-            );
-            isAdmin = true;
-          }
-        } catch (_) {}
-      }
-
-      // 2. Jika bukan superuser PB, login sebagai pengguna biasa
-      if (!isAdmin) {
-        final auth =
-            await pb.collection('users').authWithPassword(email, password);
-        if (auth.record.getBoolValue('is_admin') ||
-            auth.record.getStringValue('username') == 'admin' ||
-            auth.record.getStringValue('email').startsWith('admin@')) {
-          isAdmin = true;
-        }
-      }
+      final isAdmin = await authRepo.login(email, password);
 
       if (mounted) {
         if (isAdmin) {
@@ -207,7 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await pb.collection('users').requestPasswordReset(email);
+      await authRepo.requestPasswordReset(email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -233,7 +187,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await pb.collection('users').authWithOAuth2('google', (url) async {
+      await authRepo.loginWithGoogle((url) async {
         await launchUrl(url, mode: LaunchMode.externalApplication);
       });
 

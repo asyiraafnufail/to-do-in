@@ -50,8 +50,14 @@
 2. ~~Beranda: pencarian kata kunci + filter provinsi (FR-3.1)~~ ✅ — `feed_screen.dart` (debounce 450ms, `pb.filter()` aman dari injeksi, bottom sheet provinsi, tombol Reset Filter).
 3. ~~Infinite scroll feed~~ ✅ — 15 post/halaman, state per tab (`_FeedPage`) dengan token anti-respons-basi.
 4. ~~Batas 5 foto (FR-2.1)~~ ✅ — `create_post_screen.dart` menghitung foto lama + baru; mode edit menampilkan foto lama, hapus via `images-`, tambah via `images+` (tidak menimpa foto lama).
-5. Tombol share native, laporkan konten/akun, notifikasi.
-6. Refactor: pisahkan akses PocketBase ke service/repository; pecah screen > 1000 baris.
+5. ~~Refactor: pisahkan akses PocketBase ke service/repository; pecah screen > 1000 baris~~ ✅ (26 Nov 2026)
+   * **Data / Repository Layer (`lib/core/repositories/`):** `auth_repository.dart`, `post_repository.dart`, `social_repository.dart`, `listing_repository.dart`, `todo_repository.dart`, `kyc_repository.dart` (+ barrel `repositories.dart` & helper `pbFileUrl` di `pb_client.dart`). Seluruh layar di `lib/features/` dan `lib/core/navigation/` kini 100% bebas dari pemanggilan `pb.collection` / `pb.authStore` langsung.
+   * **Modularisasi Widget (0 file > 1.000 baris):**
+     * `todo_screen.dart` (1.150 → 562 baris): diekstrak ke `todo_progress_card.dart`, `todo_item_card.dart`, `add_todo_sheet.dart`.
+     * `post_detail_screen.dart` (1.054 → 745 baris): diekstrak ke `post_todo_recommendations_card.dart`, `post_comments_section.dart`.
+     * `admin_dashboard_screen.dart` (1.037 → 413 baris): diekstrak ke `admin_login_view.dart`, `admin_kyc_tab.dart`, `admin_moderation_tabs.dart`.
+     * `profile_screen.dart` (988 → 607 baris): diekstrak ke `edit_profile_dialog.dart`, `profile_gps_history_tab.dart`.
+6. Tombol share native, laporkan konten/akun, notifikasi.
 7. Tambah cakupan test (saat ini hanya `test/widget_test.dart`).
 8. Kembalikan job build APK Android di CI.
 9. Sinkronkan roadmap (`api.todoin.id` → `pb-dev.todoin.id`).
