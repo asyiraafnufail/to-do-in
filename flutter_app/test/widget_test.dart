@@ -136,7 +136,7 @@ void main() {
     expect(find.text('To-Do Rekomendasi Penulis (2)'), findsOneWidget);
     expect(find.text('Foto di pahatan dinding naga'), findsOneWidget);
     expect(find.text('Cicip es kelapa muda di amfiteater'), findsOneWidget);
-    expect(find.text('+ To-Do'), findsNWidgets(2));
+    expect(find.text('To-Do'), findsNWidgets(2));
   });
 
   testWidgets('ListingCard renders price formatting, category pill, and verified host',

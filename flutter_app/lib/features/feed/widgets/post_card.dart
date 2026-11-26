@@ -602,7 +602,7 @@ class _PostCardState extends State<PostCard> {
                                       ),
                                       const SizedBox(width: 4),
                                       Text(
-                                        isSaved ? 'Tersimpan' : '+ To-Do',
+                                        isSaved ? 'Tersimpan' : 'To-Do',
                                         style: TextStyle(
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w700,

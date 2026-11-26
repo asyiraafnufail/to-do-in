@@ -167,6 +167,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  bool _sendingVerification = false;
+
+  Future<void> _resendVerification(String email) async {
+    if (email.isEmpty || _sendingVerification) return;
+    setState(() => _sendingVerification = true);
+    try {
+      await pb.collection('users').requestVerification(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Email verifikasi dikirim ke $email.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal mengirim email verifikasi.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingVerification = false);
+    }
+  }
+
+  Widget _buildVerifyEmailBanner(String email, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF3B2F1A) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.mark_email_unread_outlined,
+              color: Color(0xFFF59E0B), size: 20),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Email belum diverifikasi. Tarik ke bawah untuk memuat ulang setelah verifikasi.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+          TextButton(
+            onPressed:
+                _sendingVerification ? null : () => _resendVerification(email),
+            child: _sendingVerification
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Kirim Ulang', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -345,6 +403,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ],
                     ),
+
+                    // Banner verifikasi email (hanya untuk akun users yang belum terverifikasi)
+                    if (!isSuperuser &&
+                        user.collectionName == 'users' &&
+                        !user.getBoolValue('verified')) ...[
+                      const SizedBox(height: 12),
+                      _buildVerifyEmailBanner(
+                          data['email'] as String? ?? '', isDark),
+                    ],
 
                     if (isSuperuser) ...[
                       const SizedBox(height: 10),

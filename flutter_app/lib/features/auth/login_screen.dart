@@ -66,7 +66,17 @@ class _LoginScreenState extends State<LoginScreen> {
           'contact_privacy': 'public',
         });
         await pb.collection('users').authWithPassword(email, password);
+        // Kirim email verifikasi (gagal diam-diam bila SMTP belum dikonfigurasi)
+        try {
+          await pb.collection('users').requestVerification(email);
+        } catch (_) {}
         if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'Akun berhasil dibuat. Cek email $email untuk verifikasi.'),
+            ),
+          );
           if (context.canPop()) {
             context.pop(true);
           } else {
@@ -138,6 +148,77 @@ class _LoginScreenState extends State<LoginScreen> {
         final msg = e.response['message']?.toString() ?? 'Autentikasi gagal.';
         setState(() => _error = msg);
       }
+    } catch (_) {
+      setState(() => _error = 'Tidak dapat terhubung ke server.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final ctrl = TextEditingController(text: _emailCtrl.text.trim());
+    final email = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Lupa Kata Sandi'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Masukkan email akun Anda. Kami akan mengirim tautan untuk mengatur ulang kata sandi.',
+              style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                hintText: 'nama@email.com',
+              ),
+              onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+            child: const Text('Kirim Tautan'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+
+    if (email == null || !mounted) return;
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      setState(() => _error = 'Format email tidak valid.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      await pb.collection('users').requestPasswordReset(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Jika $email terdaftar, tautan reset kata sandi telah dikirim.'),
+          ),
+        );
+      }
+    } on ClientException catch (e) {
+      setState(() => _error =
+          e.response['message']?.toString() ?? 'Gagal mengirim tautan reset.');
     } catch (_) {
       setState(() => _error = 'Tidak dapat terhubung ke server.');
     } finally {
@@ -263,7 +344,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   onSubmitted: (_) => _submit(),
                 ),
-                const SizedBox(height: 24),
+                if (!_isRegister)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _isLoading ? null : _showForgotPasswordDialog,
+                      child: const Text(
+                        'Lupa kata sandi?',
+                        style: TextStyle(
+                            color: AppColors.primary, fontSize: 13),
+                      ),
+                    ),
+                  )
+                else
+                  const SizedBox(height: 12),
+                const SizedBox(height: 12),
                 FilledButton(
                   onPressed: _isLoading ? null : _submit,
                   child: _isLoading

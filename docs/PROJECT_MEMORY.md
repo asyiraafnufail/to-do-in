@@ -1,5 +1,5 @@
 # 🧠 Project Memory & Context: TO-DO-IN Indonesia (todoin.id)
-**Terakhir Diperbarui:** 17 November 2026  
+**Terakhir Diperbarui:** 26 November 2026  
 **Status Proyek:** Siap Produksi & Terhubung ke VPS Contabo
 
 ---
@@ -40,6 +40,25 @@
   * File: `lib/features/marketplace/create_listing_screen.dart` & `lib/features/profile/user_profile_screen.dart`.
 * **Deep Linking:**
   * Skema terdaftar: `todoin://` di AndroidManifest dan iOS Info.plist.
+* **Lupa Kata Sandi & Verifikasi Email (26 Nov 2026):**
+  * `lib/features/auth/login_screen.dart`: Tautan "Lupa kata sandi?" → dialog email → `requestPasswordReset`. Setelah registrasi otomatis memanggil `requestVerification`.
+  * `lib/features/profile/profile_screen.dart`: Banner "Email belum diverifikasi" + tombol "Kirim Ulang" untuk akun `users` dengan `verified == false`. Pull-to-refresh memperbarui status.
+  * **Syarat server:** SMTP harus dikonfigurasi di `https://pb-dev.todoin.id/_/` → Settings → Mail settings. Tautan email memakai halaman bawaan PocketBase (Application URL harus `https://pb-dev.todoin.id`).
+
+### C. Backlog Berikutnya
+1. ~~Lupa kata sandi & verifikasi email~~ ✅
+2. ~~Beranda: pencarian kata kunci + filter provinsi (FR-3.1)~~ ✅ — `feed_screen.dart` (debounce 450ms, `pb.filter()` aman dari injeksi, bottom sheet provinsi, tombol Reset Filter).
+3. ~~Infinite scroll feed~~ ✅ — 15 post/halaman, state per tab (`_FeedPage`) dengan token anti-respons-basi.
+4. ~~Batas 5 foto (FR-2.1)~~ ✅ — `create_post_screen.dart` menghitung foto lama + baru; mode edit menampilkan foto lama, hapus via `images-`, tambah via `images+` (tidak menimpa foto lama).
+5. Tombol share native, laporkan konten/akun, notifikasi.
+6. Refactor: pisahkan akses PocketBase ke service/repository; pecah screen > 1000 baris.
+7. Tambah cakupan test (saat ini hanya `test/widget_test.dart`).
+8. Kembalikan job build APK Android di CI.
+9. Sinkronkan roadmap (`api.todoin.id` → `pb-dev.todoin.id`).
+
+### D. Catatan Build Android Lokal
+* `android/app/build.gradle`: `ndkVersion = "26.1.10909125"` (dibutuhkan plugin geolocator, image_picker, dll).
+* Emulator tersedia: `Pixel_4` → `flutter emulators --launch Pixel_4 && flutter run -d emulator-5554`.
 
 ### B. Konfigurasi Endpoint Backend
 * File: `lib/core/constants/app_constants.dart`

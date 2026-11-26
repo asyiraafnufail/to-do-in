@@ -828,7 +828,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                             size: 14,
                                           ),
                                           label: Text(
-                                            isSaved ? 'Tersimpan' : '+ To-Do',
+                                            isSaved ? 'Tersimpan' : 'To-Do',
                                             style: const TextStyle(
                                                 fontSize: 11.5,
                                                 fontWeight: FontWeight.w700),

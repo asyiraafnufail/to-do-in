@@ -44,9 +44,24 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final List<XFile> _selectedImages = [];
   final _picker = ImagePicker();
 
+  static const int _maxImages = 5;
+
+  /// Nama file foto yang sudah tersimpan di server (mode edit).
+  final List<String> _existingImages = [];
+
+  /// Foto lama yang ditandai untuk dihapus saat menyimpan.
+  final List<String> _removedImages = [];
+
+  int get _totalImages => _existingImages.length + _selectedImages.length;
+
   Future<void> _pickImages() async {
-    final remaining = 5 - _selectedImages.length;
-    if (remaining <= 0) return;
+    final remaining = _maxImages - _totalImages;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maksimal $_maxImages foto per cerita.')),
+      );
+      return;
+    }
     try {
       final picked = await _picker.pickMultiImage(
         imageQuality: 80,
@@ -57,6 +72,14 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         setState(() {
           _selectedImages.addAll(picked.take(remaining));
         });
+        if (picked.length > remaining) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'Maksimal $_maxImages foto. ${picked.length - remaining} foto tidak ditambahkan.'),
+            ),
+          );
+        }
       }
     } catch (_) {}
   }
@@ -82,6 +105,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       _todoList.addAll(
         p.getListValue<dynamic>('todo_items').map((e) => e.toString()),
       );
+      _existingImages.addAll(p.getListValue<String>('images'));
     } else {
       _fetchGpsLocation();
     }
@@ -279,17 +303,19 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       final slug =
           '${slugBase.isEmpty ? 'cerita' : slugBase}-$uniqueSuffix';
 
+      final isEdit = widget.initialPost != null;
       final files = <http.MultipartFile>[];
       for (final img in _selectedImages) {
         final bytes = await _compressBytes(img);
         files.add(http.MultipartFile.fromBytes(
-          'images',
+          // Saat edit, gunakan modifier "images+" agar foto lama tidak tertimpa.
+          isEdit ? 'images+' : 'images',
           bytes,
           filename: img.name.isNotEmpty ? img.name : 'image.jpg',
         ));
       }
 
-      if (widget.initialPost != null) {
+      if (isEdit) {
         await pb.collection('posts').update(
           widget.initialPost!.id,
           body: {
@@ -303,6 +329,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             'province': _province,
             'todo_items': _todoList,
             'is_edited': true,
+            if (_removedImages.isNotEmpty) 'images-': _removedImages,
           },
           files: files,
         );
@@ -638,12 +665,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                         color: AppColors.primary, size: 20),
                     const SizedBox(width: 8),
                     Text(
-                      'Foto Perjalanan (${_selectedImages.length}/5)',
+                      'Foto Perjalanan ($_totalImages/$_maxImages)',
                       style: theme.textTheme.titleMedium,
                     ),
                   ],
                 ),
-                if (_selectedImages.length < 5)
+                if (_totalImages < _maxImages)
                   TextButton.icon(
                     onPressed: _pickImages,
                     icon: const Icon(Icons.add_photo_alternate_outlined,
@@ -652,34 +679,56 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   ),
               ],
             ),
-            if (_selectedImages.isNotEmpty) ...[
+            if (_totalImages > 0) ...[
               const SizedBox(height: 10),
               SizedBox(
                 height: 86,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
-                  itemCount: _selectedImages.length,
+                  itemCount: _totalImages,
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (context, idx) {
-                    final img = _selectedImages[idx];
+                    final isExisting = idx < _existingImages.length;
+                    final Widget thumb;
+                    if (isExisting) {
+                      final name = _existingImages[idx];
+                      thumb = Image.network(
+                        pb.files
+                            .getURL(widget.initialPost!, name,
+                                thumb: '200x200')
+                            .toString(),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const ColoredBox(
+                          color: Colors.black12,
+                          child: Icon(Icons.broken_image_outlined),
+                        ),
+                      );
+                    } else {
+                      final img =
+                          _selectedImages[idx - _existingImages.length];
+                      thumb = kIsWeb
+                          ? Image.network(img.path, fit: BoxFit.cover)
+                          : Image.file(File(img.path), fit: BoxFit.cover);
+                    }
                     return Stack(
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: SizedBox(
-                            width: 86,
-                            height: 86,
-                            child: kIsWeb
-                                ? Image.network(img.path, fit: BoxFit.cover)
-                                : Image.file(File(img.path), fit: BoxFit.cover),
-                          ),
+                          child: SizedBox(width: 86, height: 86, child: thumb),
                         ),
                         Positioned(
                           top: 4,
                           right: 4,
                           child: InkWell(
-                            onTap: () =>
-                                setState(() => _selectedImages.removeAt(idx)),
+                            onTap: () => setState(() {
+                              if (isExisting) {
+                                _removedImages
+                                    .add(_existingImages.removeAt(idx));
+                              } else {
+                                _selectedImages
+                                    .removeAt(idx - _existingImages.length);
+                              }
+                            }),
                             child: const CircleAvatar(
                               radius: 11,
                               backgroundColor: Colors.black54,
